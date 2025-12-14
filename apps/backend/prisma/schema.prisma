@@ -1,0 +1,266 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  BANNED
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  username  String   @unique
+  password  String
+  status    UserStatus @default(PENDING)
+  role      UserRole   @default(USER)
+  rank      String     @default("Neutral Member")
+  points    Int        @default(50)
+  avatar    String?
+  banner    String?
+  bio       String?
+  settings  Json?      @default("{}") // { hideToxicScore: boolean, hideCommentHistory: boolean }
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  refreshTokens RefreshToken[]
+  otps          Otp[]
+  posts         Post[]
+  comments      Comment[]
+  reactions     Reaction[]
+  commentReactions CommentReaction[]
+  
+  participations ConversationParticipant[]
+  messages       Message[]
+  notifications  Notification[]
+
+  @@map("users")
+}
+
+model Otp {
+  id        String   @id @default(uuid())
+  email     String
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  
+  user      User     @relation(fields: [email], references: [email])
+
+  @@index([email])
+  @@map("otps")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  isRevoked Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+enum PostTopic {
+  GENERAL
+  TECH
+  LIFESTYLE
+  ART
+  MEME
+  NEWS
+}
+
+model Post {
+  id               String    @id @default(uuid())
+  content          String
+  images           String[]  @default([]) // Store URLs
+  topic            PostTopic @default(GENERAL)
+  editHistory      Json?     // Stores array of { timestamp, content, images }
+  
+  // AI Analysis
+  isToxic          Boolean   @default(false)
+  toxicityScore    Float     @default(0.0)
+  summary          String?
+  
+  // Engagement
+  interactionScore Float     @default(0.0) // Calculated based on likes/comments
+  
+  authorId         String
+  author           User      @relation(fields: [authorId], references: [id])
+  
+  comments         Comment[]
+  reactions        Reaction[]
+  hashtags         Hashtag[]
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([authorId])
+  @@index([createdAt])
+  @@index([interactionScore])
+  @@map("posts")
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  content   String
+  authorId  String
+  postId    String
+  
+  author    User     @relation(fields: [authorId], references: [id])
+  post      Post     @relation(fields: [postId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  isToxic          Boolean   @default(false)
+  toxicityScore    Float     @default(0.0)
+
+  reactions CommentReaction[]
+
+  @@index([postId])
+  @@map("comments")
+}
+
+enum ReactionType {
+  LIKE
+  LOVE
+  LAUGH
+  SAD
+  ANGRY
+}
+
+model Reaction {
+  id        String       @id @default(uuid())
+  type      ReactionType
+  authorId  String
+  postId    String
+  
+  author    User         @relation(fields: [authorId], references: [id])
+  post      Post         @relation(fields: [postId], references: [id])
+
+  createdAt DateTime     @default(now())
+
+  @@unique([authorId, postId]) // One reaction per user per post
+  @@index([postId])
+  @@map("reactions")
+}
+
+model CommentReaction {
+  id        String       @id @default(uuid())
+  type      ReactionType
+  authorId  String
+  commentId String
+  
+  author    User         @relation(fields: [authorId], references: [id])
+  comment   Comment      @relation(fields: [commentId], references: [id])
+
+  createdAt DateTime     @default(now())
+
+  @@unique([authorId, commentId])
+  @@index([commentId])
+  @@map("comment_reactions")
+}
+
+model Conversation {
+  id        String   @id @default(uuid())
+  updatedAt DateTime @updatedAt
+  
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  id             String       @id @default(uuid())
+  conversationId String
+  userId         String
+  
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  user           User         @relation(fields: [userId], references: [id])
+  
+  joinedAt       DateTime     @default(now())
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  content        String
+  images         String[]     @default([])
+  
+  senderId       String
+  conversationId String
+  
+  sender         User         @relation(fields: [senderId], references: [id])
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  
+  seenBy         Json         @default("[]") // Array of User IDs who saw the message
+
+  createdAt      DateTime     @default(now())
+  
+  @@index([conversationId])
+  @@map("messages")
+}
+
+model TrendingTopic {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  count     Int      @default(0)
+  updatedAt DateTime @updatedAt
+  
+  @@map("trending_topics")
+}
+
+model Hashtag {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  count     Int      @default(1)
+  
+  posts     Post[]
+
+  @@map("hashtags")
+}
+
+enum NotificationType {
+  NEW_MESSAGE
+  NEW_COMMENT
+  NEW_REACTION
+  MENTION
+  AI_WARNING
+  SYSTEM
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  type      NotificationType
+  content   String
+  isRead    Boolean          @default(false)
+  updatedAt DateTime         @updatedAt
+  createdAt DateTime         @default(now())
+
+  userId    String
+  user      User             @relation(fields: [userId], references: [id])
+  
+  metadata  Json?            // Store related post/comment ID etc. e.g. { postId: "...", commentId: "..." }
+
+  @@index([userId])
+  @@map("notifications")
+}
